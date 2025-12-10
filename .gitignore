@@ -1,18 +1,22 @@
 # Dependencies
 node_modules/
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+.pnp
+.pnp.js
 
-# Build output
+# Testing
+coverage/
+*.lcov
+
+# Production
 dist/
 build/
-*.tsbuildinfo
 
-# Environment variables
+# Environment
 .env
 .env.local
-.env.production
+.env.development.local
+.env.test.local
+.env.production.local
 
 # Logs
 logs/
@@ -20,11 +24,12 @@ logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pino-*.log
+pnpm-debug.log*
+lerna-debug.log*
 
-# Testing
-coverage/
-.nyc_output/
+# OS
+.DS_Store
+Thumbs.db
 
 # IDE
 .vscode/
@@ -33,21 +38,11 @@ coverage/
 *.swo
 *~
 
-# OS
-.DS_Store
-Thumbs.db
-
 # Prisma
-prisma/migrations/
-!prisma/migrations/.gitkeep
+prisma/dev.db
+prisma/dev.db-journal
 
-# Temporary files
-tmp/
+# Misc
+.cache/
 temp/
-*.tmp
-
-# Debug
-.pnp.*
-.yarn/*
-
-
+tmp/
