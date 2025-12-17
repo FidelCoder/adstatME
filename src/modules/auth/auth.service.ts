@@ -12,6 +12,7 @@ export class AuthService {
   private readonly OTP_MAX_ATTEMPTS = 5;
   private readonly RATE_LIMIT_KEY_PREFIX = 'auth:ratelimit:';
   private readonly OTP_KEY_PREFIX = 'auth:otp:';
+  private readonly otpFallbackStore: Map<string, OtpRecord> = new Map();
 
   /**
    * Generate a 6-digit OTP
@@ -25,20 +26,24 @@ export class AuthService {
    */
   private async checkRateLimit(phoneNumber: string): Promise<void> {
     const key = `${this.RATE_LIMIT_KEY_PREFIX}${phoneNumber}`;
-    const attempts = await redis.incr(key);
-    
-    if (attempts === 1) {
-      // First attempt, set expiry
-      await redis.expire(key, this.OTP_EXPIRY_MINUTES * 60);
-    }
-    
-    if (attempts > this.OTP_MAX_ATTEMPTS) {
-      const ttl = await redis.ttl(key);
-      throw new AppError(
-        'TOO_MANY_REQUESTS',
-        `Too many OTP requests. Please try again in ${Math.ceil(ttl / 60)} minutes`,
-        429
-      );
+    try {
+      const attempts = await redis.incr(key);
+      
+      if (attempts === 1) {
+        // First attempt, set expiry
+        await redis.expire(key, this.OTP_EXPIRY_MINUTES * 60);
+      }
+      
+      if (attempts > this.OTP_MAX_ATTEMPTS) {
+        const ttl = await redis.ttl(key);
+        throw new AppError(
+          'TOO_MANY_REQUESTS',
+          `Too many OTP requests. Please try again in ${Math.ceil(ttl / 60)} minutes`,
+          429
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Rate limiting skipped (Redis unavailable)');
     }
   }
 
@@ -52,7 +57,7 @@ export class AuthService {
     // Generate OTP
     const otp = this.generateOtp();
     
-    // Store OTP in Redis with expiry
+    // Store OTP in Redis with expiry; fallback to memory if Redis unavailable
     const otpKey = `${this.OTP_KEY_PREFIX}${phoneNumber}`;
     const otpRecord: OtpRecord = {
       phoneNumber,
@@ -61,11 +66,17 @@ export class AuthService {
       attempts: 0,
     };
     
-    await redis.setex(
-      otpKey,
-      this.OTP_EXPIRY_MINUTES * 60,
-      JSON.stringify(otpRecord)
-    );
+    try {
+      await redis.setex(
+        otpKey,
+        this.OTP_EXPIRY_MINUTES * 60,
+        JSON.stringify(otpRecord)
+      );
+    } catch (err) {
+      logger.warn({ err }, 'Redis unavailable, using in-memory OTP store');
+      this.otpFallbackStore.set(phoneNumber, otpRecord);
+      setTimeout(() => this.otpFallbackStore.delete(phoneNumber), this.OTP_EXPIRY_MINUTES * 60 * 1000);
+    }
 
     // Send SMS via Africa's Talking
     await smsService.sendOtp(phoneNumber, otp);
@@ -80,37 +91,56 @@ export class AuthService {
    * Verify OTP and authenticate user
    */
   async verifyOtp(phoneNumber: string, otp: string): Promise<AuthResponse> {
-    // Retrieve OTP record from Redis
+    // Retrieve OTP record from Redis or fallback
     const otpKey = `${this.OTP_KEY_PREFIX}${phoneNumber}`;
-    const otpRecordStr = await redis.get(otpKey);
+    let otpRecord: OtpRecord | null = null;
+    try {
+      const otpRecordStr = await redis.get(otpKey);
+      if (otpRecordStr) {
+        otpRecord = JSON.parse(otpRecordStr) as OtpRecord;
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Redis unavailable, using in-memory OTP store');
+      otpRecord = this.otpFallbackStore.get(phoneNumber) || null;
+    }
     
-    if (!otpRecordStr) {
+    if (!otpRecord) {
       throw new AppError('INVALID_OTP', 'OTP has expired or is invalid', 401);
     }
 
-    const otpRecord: OtpRecord = JSON.parse(otpRecordStr);
-    
     // Increment attempt counter
     otpRecord.attempts += 1;
     
     if (otpRecord.attempts > 3) {
-      await redis.del(otpKey);
+      try {
+        await redis.del(otpKey);
+      } catch {
+        this.otpFallbackStore.delete(phoneNumber);
+      }
       throw new AppError('TOO_MANY_ATTEMPTS', 'Too many failed attempts. Please request a new OTP', 429);
     }
 
     // Verify OTP
     if (otpRecord.otp !== otp) {
       // Update attempts in Redis
-      await redis.setex(
-        otpKey,
-        this.OTP_EXPIRY_MINUTES * 60,
-        JSON.stringify(otpRecord)
-      );
+      try {
+        await redis.setex(
+          otpKey,
+          this.OTP_EXPIRY_MINUTES * 60,
+          JSON.stringify(otpRecord)
+        );
+      } catch {
+        this.otpFallbackStore.set(phoneNumber, otpRecord);
+      }
       throw new AppError('INVALID_OTP', 'Invalid OTP', 401);
     }
 
     // OTP is valid, delete from Redis
-    await redis.del(otpKey);
+    try {
+      await redis.del(otpKey);
+    } catch {
+      this.otpFallbackStore.delete(phoneNumber);
+    }
 
     // Find or create user
     let user = await prisma.user.findUnique({

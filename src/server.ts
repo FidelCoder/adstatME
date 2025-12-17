@@ -53,13 +53,18 @@ app.get('/health', async (req: Request, res: Response) => {
     // Check database connection
     await prisma.$queryRaw`SELECT 1`;
     
-    // Check Redis connection
-    await redis.ping();
+    // Check Redis connection (optional)
+    let redisHealthy = true;
+    try {
+      await redis.ping();
+    } catch (err) {
+      redisHealthy = false;
+    }
     
     res.json({
       success: true,
       data: {
-        status: 'healthy',
+        status: redisHealthy ? 'healthy' : 'degraded',
         timestamp: new Date().toISOString(),
         environment: env.NODE_ENV,
         version: env.API_VERSION,
