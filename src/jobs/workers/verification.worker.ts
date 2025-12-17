@@ -54,3 +54,6 @@ verificationWorker.on('failed', (job, err) => {
 
 logger.info('✅ Verification worker started');
 
+
+
+

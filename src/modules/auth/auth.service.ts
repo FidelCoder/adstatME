@@ -4,6 +4,7 @@ import { redis } from '@config/redis';
 import { env } from '@config/env';
 import { logger } from '@config/logger';
 import { AppError } from '@shared/errors/app-error';
+import { smsService } from '@/services/sms.service';
 import type { AuthResponse, AuthTokens, OtpRecord } from './auth.types';
 
 export class AuthService {
@@ -66,16 +67,8 @@ export class AuthService {
       JSON.stringify(otpRecord)
     );
 
-    // TODO: Send SMS via Africa's Talking
-    // For development, log the OTP
-    if (env.NODE_ENV === 'development') {
-      logger.info({ phoneNumber, otp }, '📱 OTP Generated (DEV MODE)');
-      console.log(`\n🔐 OTP for ${phoneNumber}: ${otp}\n`);
-    } else {
-      // In production, send actual SMS
-      logger.info({ phoneNumber }, 'OTP sent via SMS');
-      // await this.sendSms(phoneNumber, `Your AdstatMe verification code is: ${otp}`);
-    }
+    // Send SMS via Africa's Talking
+    await smsService.sendOtp(phoneNumber, otp);
 
     return {
       message: 'OTP sent successfully',

@@ -128,9 +128,13 @@ const startServer = async () => {
     await prisma.$connect();
     logger.info('✅ Database connected');
 
-    // Test Redis connection
-    await redis.ping();
-    logger.info('✅ Redis connected');
+    // Test Redis connection (optional)
+    try {
+      await redis.ping();
+      logger.info('✅ Redis connected');
+    } catch (redisError) {
+      logger.warn('⚠️  Redis not available - continuing without cache');
+    }
 
     // Start server
     const PORT = env.PORT;
