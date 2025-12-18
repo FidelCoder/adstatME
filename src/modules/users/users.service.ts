@@ -14,7 +14,7 @@ export class UsersService {
     });
 
     if (!user) {
-      throw new AppError('NOT_FOUND', 'User not found', 404);
+      throw new AppError('User not found', 404, 'NOT_FOUND');
     }
 
     return {
@@ -107,7 +107,7 @@ export class UsersService {
     });
 
     if (!user) {
-      throw new AppError('NOT_FOUND', 'User not found', 404);
+      throw new AppError('User not found', 404, 'NOT_FOUND');
     }
 
     return {
@@ -131,7 +131,7 @@ export class UsersService {
     });
 
     if (!user) {
-      throw new AppError('NOT_FOUND', 'User not found', 404);
+      throw new AppError('User not found', 404, 'NOT_FOUND');
     }
 
     // Calculate pending earnings (verified but not paid posts)
