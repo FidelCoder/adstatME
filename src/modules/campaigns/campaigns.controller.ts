@@ -123,6 +123,8 @@ export class CampaignsController {
 
     const query = campaignQuerySchema.parse({
       status: req.query.status,
+      category: req.query.category,
+      organizationId: req.query.organizationId,
       limit: req.query.limit ? parseInt(req.query.limit as string) : 20,
       cursor: req.query.cursor,
     });
@@ -130,6 +132,8 @@ export class CampaignsController {
     const result = await this.campaignsService.listCampaigns(
       req.user.userId,
       query.status,
+      query.organizationId,
+      query.category,
       query.limit,
       query.cursor
     );
@@ -148,7 +152,9 @@ export class CampaignsController {
    */
   getAvailableCampaigns = asyncHandler(async (req: Request, res: Response) => {
     const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
-    const campaigns = await this.campaignsService.getAvailableCampaigns(limit);
+    const category = req.query.category as string | undefined;
+    const organizationId = req.query.organizationId as string | undefined;
+    const campaigns = await this.campaignsService.getAvailableCampaigns(category, organizationId, limit);
 
     const response: ApiResponse = {
       success: true,

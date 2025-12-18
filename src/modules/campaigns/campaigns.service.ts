@@ -26,8 +26,10 @@ export class CampaignsService {
     return {
       id: campaign.id,
       brandId: campaign.brandId,
+      organizationId: campaign.organizationId,
       name: campaign.name,
       description: campaign.description,
+      category: campaign.category,
       creativeUrl: campaign.creativeUrl,
       watermarkId: campaign.watermarkId,
       callToAction: campaign.callToAction,
@@ -56,20 +58,64 @@ export class CampaignsService {
   /**
    * Create a new campaign
    */
-  async createCampaign(brandId: string, data: CreateCampaignRequest): Promise<CampaignResponse> {
-    // Verify brand exists and has sufficient balance
-    const brand = await prisma.brand.findUnique({
-      where: { id: brandId },
-    });
+  async createCampaign(userId: string, data: CreateCampaignRequest): Promise<CampaignResponse> {
+    let brandId: string | null = null;
+    let organizationId: string | null = data.organizationId || null;
 
-    if (!brand) {
-      throw new AppError('NOT_FOUND', 'Brand not found', 404);
-    }
+    // If organizationId provided, verify user has permission
+    if (organizationId) {
+      const { OrganizationsService } = await import('@modules/organizations');
+      const orgService = new OrganizationsService();
+      
+      const hasPermission = await orgService.checkPermission(
+        organizationId,
+        userId,
+        'createCampaigns'
+      );
 
-    if (brand.balance.toNumber() < data.totalBudget) {
+      if (!hasPermission) {
+        throw new AppError(
+          'FORBIDDEN',
+          'You do not have permission to create campaigns in this organization',
+          403
+        );
+      }
+
+      // Verify organization exists and has sufficient balance
+      const organization = await prisma.organization.findUnique({
+        where: { id: organizationId },
+      });
+
+      if (!organization) {
+        throw new AppError('NOT_FOUND', 'Organization not found', 404);
+      }
+
+      if (organization.balance.toNumber() < data.totalBudget) {
+        throw new AppError(
+          'INSUFFICIENT_BALANCE',
+          'Insufficient organization balance to create campaign',
+          400
+        );
+      }
+    } else {
+      // Legacy: use brand (for backward compatibility)
+      // Find user's brand or use default brand logic
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (user?.role !== 'BRAND' && user?.role !== 'ADMIN') {
+        throw new AppError(
+          'FORBIDDEN',
+          'You must be part of an organization or be a brand to create campaigns',
+          403
+        );
+      }
+
+      // For now, we'll require organizationId for new campaigns
       throw new AppError(
-        'INSUFFICIENT_BALANCE',
-        'Insufficient balance to create campaign',
+        'VALIDATION_ERROR',
+        'organizationId is required to create a campaign',
         400
       );
     }
@@ -90,8 +136,10 @@ export class CampaignsService {
     const campaign = await prisma.campaign.create({
       data: {
         brandId,
+        organizationId,
         name: data.name,
         description: data.description,
+        category: data.category,
         creativeUrl: data.creativeUrl,
         watermarkId,
         callToAction: data.callToAction,
@@ -113,7 +161,17 @@ export class CampaignsService {
       },
     });
 
-    logger.info({ campaignId: campaign.id, brandId }, 'Campaign created');
+    // Update organization stats
+    if (organizationId) {
+      await prisma.organization.update({
+        where: { id: organizationId },
+        data: {
+          totalCampaigns: { increment: 1 },
+        },
+      });
+    }
+
+    logger.info({ campaignId: campaign.id, brandId, organizationId }, 'Campaign created');
 
     return this.transformCampaign(campaign);
   }
@@ -143,7 +201,7 @@ export class CampaignsService {
    */
   async updateCampaign(
     campaignId: string,
-    brandId: string,
+    userId: string,
     data: UpdateCampaignRequest
   ): Promise<CampaignResponse> {
     // Verify ownership
@@ -155,7 +213,29 @@ export class CampaignsService {
       throw new AppError('NOT_FOUND', 'Campaign not found', 404);
     }
 
-    if (campaign.brandId !== brandId) {
+    // Check organization permission
+    if (campaign.organizationId) {
+      const { OrganizationsService } = await import('@modules/organizations');
+      const orgService = new OrganizationsService();
+      const hasPermission = await orgService.checkPermission(
+        campaign.organizationId,
+        userId,
+        'createCampaigns'
+      );
+
+      if (!hasPermission) {
+        throw new AppError('FORBIDDEN', 'Access denied to this campaign', 403);
+      }
+    } else if (campaign.brandId) {
+      // Legacy brand check
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (user?.role !== 'BRAND' && user?.role !== 'ADMIN') {
+        throw new AppError('FORBIDDEN', 'Access denied to this campaign', 403);
+      }
+    } else {
       throw new AppError('FORBIDDEN', 'Access denied to this campaign', 403);
     }
 
@@ -173,6 +253,7 @@ export class CampaignsService {
     
     if (data.name !== undefined) updateData.name = data.name;
     if (data.description !== undefined) updateData.description = data.description;
+    if (data.category !== undefined) updateData.category = data.category;
     if (data.creativeUrl !== undefined) updateData.creativeUrl = data.creativeUrl;
     if (data.callToAction !== undefined) updateData.callToAction = data.callToAction;
     if (data.targetLocations !== undefined) updateData.targetLocations = data.targetLocations;
@@ -195,7 +276,7 @@ export class CampaignsService {
       data: updateData,
     });
 
-    logger.info({ campaignId, brandId }, 'Campaign updated');
+    logger.info({ campaignId, organizationId: campaign.organizationId, brandId: campaign.brandId }, 'Campaign updated');
 
     return this.transformCampaign(updatedCampaign);
   }
@@ -205,32 +286,65 @@ export class CampaignsService {
    */
   async updateCampaignStatus(
     campaignId: string,
-    brandId: string,
+    userId: string,
     status: CampaignStatus
   ): Promise<CampaignResponse> {
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
-      include: { brand: true },
+      include: { brand: true, organization: true },
     });
 
     if (!campaign) {
       throw new AppError('NOT_FOUND', 'Campaign not found', 404);
     }
 
-    if (campaign.brandId !== brandId) {
+    // Check organization permission
+    if (campaign.organizationId) {
+      const { OrganizationsService } = await import('@modules/organizations');
+      const orgService = new OrganizationsService();
+      const hasPermission = await orgService.checkPermission(
+        campaign.organizationId,
+        userId,
+        'createCampaigns'
+      );
+
+      if (!hasPermission) {
+        throw new AppError('FORBIDDEN', 'Access denied to this campaign', 403);
+      }
+    } else if (campaign.brandId) {
+      // Legacy brand check
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (user?.role !== 'BRAND' && user?.role !== 'ADMIN') {
+        throw new AppError('FORBIDDEN', 'Access denied to this campaign', 403);
+      }
+    } else {
       throw new AppError('FORBIDDEN', 'Access denied to this campaign', 403);
     }
 
     // Validate status transition
     if (status === 'ACTIVE') {
-      // Check brand balance
+      // Check balance (organization or brand)
       const remainingBudget = campaign.totalBudget.toNumber() - campaign.spentBudget.toNumber();
-      if (campaign.brand.balance.toNumber() < remainingBudget) {
-        throw new AppError(
-          'INSUFFICIENT_BALANCE',
-          'Insufficient balance to activate campaign',
-          400
-        );
+      
+      if (campaign.organization) {
+        if (campaign.organization.balance.toNumber() < remainingBudget) {
+          throw new AppError(
+            'INSUFFICIENT_BALANCE',
+            'Insufficient organization balance to activate campaign',
+            400
+          );
+        }
+      } else if (campaign.brand) {
+        if (campaign.brand.balance.toNumber() < remainingBudget) {
+          throw new AppError(
+            'INSUFFICIENT_BALANCE',
+            'Insufficient balance to activate campaign',
+            400
+          );
+        }
       }
 
       // Set start date if not set
@@ -248,7 +362,7 @@ export class CampaignsService {
       data: { status },
     });
 
-    logger.info({ campaignId, brandId, status }, 'Campaign status updated');
+    logger.info({ campaignId, organizationId: campaign.organizationId, brandId: campaign.brandId, status }, 'Campaign status updated');
 
     return this.transformCampaign(updatedCampaign);
   }
@@ -257,13 +371,55 @@ export class CampaignsService {
    * List campaigns (with filters)
    */
   async listCampaigns(
-    brandId: string,
+    userId: string,
     status?: CampaignStatus,
+    organizationId?: string,
+    category?: string,
     limit: number = 20,
     cursor?: string
   ) {
-    const where: Prisma.CampaignWhereInput = { brandId };
+    const where: Prisma.CampaignWhereInput = {};
+    
     if (status) where.status = status;
+    if (category) where.category = category as any;
+    
+    // Filter by organization if user is member
+    if (organizationId) {
+      where.organizationId = organizationId;
+      
+      // Verify user has access
+      const member = await prisma.organizationMember.findUnique({
+        where: {
+          organizationId_userId: {
+            organizationId,
+            userId,
+          },
+        },
+      });
+
+      if (!member) {
+        const org = await prisma.organization.findUnique({
+          where: { id: organizationId },
+        });
+
+        if (!org || !org.isPublic) {
+          throw new AppError('FORBIDDEN', 'You do not have access to this organization', 403);
+        }
+      }
+    } else {
+      // Show campaigns from user's organizations or public campaigns
+      const userOrgs = await prisma.organizationMember.findMany({
+        where: { userId },
+        select: { organizationId: true },
+      });
+
+      const orgIds = userOrgs.map(o => o.organizationId);
+
+      where.OR = [
+        { organizationId: { in: orgIds } },
+        { organization: { isPublic: true } },
+      ];
+    }
 
     const campaigns = await prisma.campaign.findMany({
       where,
@@ -289,32 +445,62 @@ export class CampaignsService {
   /**
    * Get active campaigns available for users
    */
-  async getAvailableCampaigns(limit: number = 20) {
+  async getAvailableCampaigns(category?: string, organizationId?: string, limit: number = 20) {
     const now = new Date();
 
+    const where: Prisma.CampaignWhereInput = {
+      status: 'ACTIVE',
+      OR: [
+        { startDate: null },
+        { startDate: { lte: now } },
+      ],
+      AND: [
+        {
+          OR: [
+            { endDate: null },
+            { endDate: { gte: now } },
+          ],
+        },
+      ],
+    };
+
+    if (category) {
+      where.category = category as any;
+    }
+
+    if (organizationId) {
+      where.organizationId = organizationId;
+    }
+
     const campaigns = await prisma.campaign.findMany({
-      where: {
-        status: 'ACTIVE',
-        OR: [
-          { startDate: null },
-          { startDate: { lte: now } },
-        ],
-        OR: [
-          { endDate: null },
-          { endDate: { gte: now } },
-        ],
+      where,
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
 
-    return campaigns.map(this.transformCampaign);
+    return campaigns.map(c => ({
+      ...this.transformCampaign(c),
+      organization: c.organization ? {
+        id: c.organization.id,
+        name: c.organization.name,
+        slug: c.organization.slug,
+      } : null,
+    }));
   }
 
   /**
    * Get campaign statistics
    */
-  async getCampaignStats(campaignId: string, brandId: string): Promise<CampaignStats> {
+  async getCampaignStats(campaignId: string, userId: string): Promise<CampaignStats> {
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
       include: {
@@ -328,7 +514,29 @@ export class CampaignsService {
       throw new AppError('NOT_FOUND', 'Campaign not found', 404);
     }
 
-    if (campaign.brandId !== brandId) {
+    // Check organization permission
+    if (campaign.organizationId) {
+      const { OrganizationsService } = await import('@modules/organizations');
+      const orgService = new OrganizationsService();
+      const hasPermission = await orgService.checkPermission(
+        campaign.organizationId,
+        userId,
+        'viewAnalytics'
+      );
+
+      if (!hasPermission) {
+        throw new AppError('FORBIDDEN', 'Access denied to this campaign', 403);
+      }
+    } else if (campaign.brandId) {
+      // Legacy brand check
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (user?.role !== 'BRAND' && user?.role !== 'ADMIN') {
+        throw new AppError('FORBIDDEN', 'Access denied to this campaign', 403);
+      }
+    } else {
       throw new AppError('FORBIDDEN', 'Access denied to this campaign', 403);
     }
 

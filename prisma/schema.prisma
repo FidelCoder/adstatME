@@ -56,6 +56,32 @@ enum PayoutMethod {
   BANK
 }
 
+enum OrganizationMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum CampaignCategory {
+  FASHION
+  TECH
+  FOOD
+  TRAVEL
+  SPORTS
+  MUSIC
+  GAMING
+  FITNESS
+  BEAUTY
+  EDUCATION
+  BUSINESS
+  ENTERTAINMENT
+  HEALTH
+  AUTOMOTIVE
+  REAL_ESTATE
+  FINANCE
+  OTHER
+}
+
 // ============================================
 // MODELS
 // ============================================
@@ -104,6 +130,7 @@ model User {
   referredBy    User?      @relation("Referrals", fields: [referrerId], references: [id])
   referrerId    String?    @map("referrer_id")
   referrals     User[]     @relation("Referrals")
+  organizationMembers OrganizationMember[]
   
   @@map("users")
   @@index([phoneNumber])
@@ -141,11 +168,13 @@ model Brand {
 
 model Campaign {
   id          String   @id @default(uuid())
-  brandId     String   @map("brand_id")
+  brandId     String?  @map("brand_id") // Optional for backward compatibility
+  organizationId String? @map("organization_id") // New: link to organization
   
   // Campaign details
   name        String
   description String?  @db.Text
+  category    CampaignCategory @default(OTHER)
   creativeUrl String   @map("creative_url")
   watermarkId String   @unique @map("watermark_id")
   callToAction String? @map("call_to_action")
@@ -181,11 +210,14 @@ model Campaign {
   deletedAt   DateTime? @map("deleted_at")
   
   // Relations
-  brand       Brand    @relation(fields: [brandId], references: [id])
+  brand       Brand?    @relation(fields: [brandId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
   posts       Post[]
   
   @@map("campaigns")
   @@index([brandId])
+  @@index([organizationId])
+  @@index([category])
   @@index([status])
   @@index([startDate, endDate])
 }
@@ -302,6 +334,69 @@ model RefreshToken {
   @@map("refresh_tokens")
   @@index([userId])
   @@index([token])
+}
+
+model Organization {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique // URL-friendly identifier
+  description String?  @db.Text
+  logoUrl     String?  @map("logo_url")
+  website     String?
+  email       String?
+  phoneNumber String? @map("phone_number")
+  
+  // Balance (shared across organization)
+  balance     Decimal  @default(0) @db.Decimal(10, 2)
+  totalSpent  Decimal  @default(0) @db.Decimal(10, 2) @map("total_spent")
+  
+  // Stats
+  totalCampaigns    Int  @default(0) @map("total_campaigns")
+  totalImpressions  Int  @default(0) @map("total_impressions")
+  memberCount       Int  @default(0) @map("member_count")
+  
+  // Settings
+  isPublic    Boolean  @default(false) @map("is_public") // Can users see/join?
+  isActive    Boolean  @default(true) @map("is_active")
+  
+  // Timestamps
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+  
+  // Relations
+  members     OrganizationMember[]
+  campaigns   Campaign[]
+  
+  @@map("organizations")
+  @@index([slug])
+  @@index([isPublic, isActive])
+}
+
+model OrganizationMember {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  userId         String   @map("user_id")
+  role           OrganizationMemberRole @default(MEMBER)
+  
+  // Permissions (can be extended)
+  canCreateCampaigns Boolean @default(false) @map("can_create_campaigns")
+  canManageMembers   Boolean @default(false) @map("can_manage_members")
+  canViewAnalytics   Boolean @default(true) @map("can_view_analytics")
+  
+  // Timestamps
+  joinedAt      DateTime @default(now()) @map("joined_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([organizationId, userId])
+  @@map("organization_members")
+  @@index([organizationId])
+  @@index([userId])
+  @@index([role])
 }
 
 

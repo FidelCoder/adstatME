@@ -5,8 +5,10 @@ import { ageRangeSchema, interestSchema } from '@shared/validators/common.valida
 export const createCampaignSchema = z.object({
   name: z.string().min(3).max(200),
   description: z.string().max(1000).optional(),
+  category: z.enum(['FASHION', 'TECH', 'FOOD', 'TRAVEL', 'SPORTS', 'MUSIC', 'GAMING', 'FITNESS', 'BEAUTY', 'EDUCATION', 'BUSINESS', 'ENTERTAINMENT', 'HEALTH', 'AUTOMOTIVE', 'REAL_ESTATE', 'FINANCE', 'OTHER']).default('OTHER'),
   creativeUrl: z.string().url(),
   callToAction: z.string().max(200).optional(),
+  organizationId: z.string().uuid().optional(), // New: link to organization
   
   // Targeting
   targetLocations: z.array(z.string()).min(1).max(50),
@@ -42,6 +44,8 @@ export const updateCampaignStatusSchema = z.object({
 // Campaign query schema
 export const campaignQuerySchema = z.object({
   status: z.enum(['DRAFT', 'ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED']).optional(),
+  category: z.enum(['FASHION', 'TECH', 'FOOD', 'TRAVEL', 'SPORTS', 'MUSIC', 'GAMING', 'FITNESS', 'BEAUTY', 'EDUCATION', 'BUSINESS', 'ENTERTAINMENT', 'HEALTH', 'AUTOMOTIVE', 'REAL_ESTATE', 'FINANCE', 'OTHER']).optional(),
+  organizationId: z.string().uuid().optional(),
   limit: z.number().int().min(1).max(100).default(20),
   cursor: z.string().optional(),
 });
@@ -53,9 +57,11 @@ export type CampaignQuery = z.infer<typeof campaignQuerySchema>;
 
 export interface CampaignResponse {
   id: string;
-  brandId: string;
+  brandId: string | null;
+  organizationId: string | null;
   name: string;
   description: string | null;
+  category: string;
   creativeUrl: string;
   watermarkId: string;
   callToAction: string | null;

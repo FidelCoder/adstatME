@@ -98,6 +98,7 @@ app.get(`/api/${env.API_VERSION}`, (req: Request, res: Response) => {
 import { authRouter } from '@modules/auth';
 import { usersRouter } from '@modules/users';
 import { brandsRouter } from '@modules/brands';
+import { organizationsRouter } from '@modules/organizations';
 import { campaignsRouter } from '@modules/campaigns';
 import { postsRouter } from '@modules/posts';
 import { paymentsRouter } from '@modules/payments';
@@ -105,6 +106,7 @@ import { paymentsRouter } from '@modules/payments';
 app.use(`/api/${env.API_VERSION}/auth`, authRouter);
 app.use(`/api/${env.API_VERSION}/users`, usersRouter);
 app.use(`/api/${env.API_VERSION}/brands`, brandsRouter);
+app.use(`/api/${env.API_VERSION}/organizations`, organizationsRouter);
 app.use(`/api/${env.API_VERSION}/campaigns`, campaignsRouter);
 app.use(`/api/${env.API_VERSION}/posts`, postsRouter);
 app.use(`/api/${env.API_VERSION}/payments`, paymentsRouter);

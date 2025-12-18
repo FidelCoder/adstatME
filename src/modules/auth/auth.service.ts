@@ -57,6 +57,10 @@ export class AuthService {
     // Generate OTP
     const otp = this.generateOtp();
     
+    // Log OTP in development mode
+    logger.info({ phoneNumber, otp }, '🔐 OTP Generated');
+    console.log(`\n🔐 OTP for ${phoneNumber}: ${otp}\n`);
+    
     // Store OTP in Redis with expiry; fallback to memory if Redis unavailable
     const otpKey = `${this.OTP_KEY_PREFIX}${phoneNumber}`;
     const otpRecord: OtpRecord = {
